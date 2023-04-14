@@ -1,70 +1,190 @@
 // Программа для каретки
 // 29.03.2023
 
+// =========================================================================
+// Подключаем библиотеки
+
 #include <SPI.h>      // Подключаем библиотеку для работы с SPI-интерфейсом
 #include <nRF24L01.h> // Подключаем файл конфигурации из библиотеки RF24
 #include <RF24.h>     // Подключаем библиотеку для работа для работы с модулем NRF24L01
+#include <AceRoutine.h>
 
+// =========================================================================
+// Параметры программы
+
+// Пины радио модуля
 #define PIN_CE  10  // Номер пина Arduino, к которому подключен вывод CE радиомодуля
 #define PIN_CSN 9   // Номер пина Arduino, к которому подключен вывод CSN радиомодуля
 
-#define PIN_REVERSE_ENABLE 3 // Пин 1 обратного хода
-#define PIN_REVERSE_ON     4 // Пин 2 обратного хода
-#define PIN_DIRECT_ENABLE  5 // Пин прямого хода
+// Пины каретки
+#define PIN_CARRIAGE_REVERSE_ENABLE 3 // Включение реверса
+#define PIN_CARRIAGE_REVERSE_POWER  4 // Питание обратного хода
+#define PIN_CARRIAGE_DIRECT_POWER   5 // Питание прямого хода
 
-#define PIPE1       0xB4B5B6B7F1 // Труба по которой пульт общается с кареткой
+// Пины подъёмника
+#define PIN_MAGNET_REVERSE_ENABLE 8 // Включение реверса
+#define PIN_MAGNET_REVERSE_POWER  7 // Питание обратного хода
+#define PIN_MAGNET_DIRECT_POWER   6 // Питание прямого хода
+
+// Трубы
+#define PIPE1 0xB4B5B6B7F1 // Труба по которой пульт общается с кареткой
+
+// Пороговые значения
 #define AVG         117          // Среднее значение джойстика
 #define SENSETIVITY 20           // Чувствительность джойстика
 
-#define REVERSE_DELAY 1000 // Задержка реверса
+// Задержки
+#define POWER_DELAY 100 // Задержка реверса
 
+// Макрос, организующий отдых
+#define rest(PIN1, PIN2, PIN3) \
+  digitalWrite(PIN1, LOW); \
+  COROUTINE_DELAY(POWER_DELAY); \
+  digitalWrite(PIN2, HIGH); \
+  COROUTINE_DELAY(POWER_DELAY); \
+  digitalWrite(PIN3, LOW); \
+
+// =========================================================================
+// Основные переменные
 RF24 radio(PIN_CE, PIN_CSN); // Создаём объект radio с указанием выводов CE и CSN
 
-uint8_t data = 0;
+// Данные от пульта
+uint8_t data[] = {0, 0};   // Данные, приходящие на приёмник
+uint8_t carriage_move = 0; // Движение каретки
+uint8_t magnet_move = 0;   // Движение магнита
 
-uint8_t is_reverse = 0;     // Нужно ли сделать реверс
-uint8_t is_reverse_old = 0; // Старое значение реверса
-uint8_t is_move = 1;        // Нужно ли двигаться
+// Переменные для управления реверсом каретки
+uint8_t carriage_is_reverse = 0;     // Нужно ли сделать реверс
+uint8_t carriage_is_reverse_old = 0; // Старое значение реверса
 
-unsigned long last_move_time = 0;
+// Переменные для управления реверсом подъёмника
+uint8_t magnet_is_reverse = 0;     // Нужно ли сделать реверс
+uint8_t magnet_is_reverse_old = 0; // Старое значение реверса
 
+// =========================================================================
+// Корутины
+
+// Корутина движения каретки
+COROUTINE (move_carriage) {
+  COROUTINE_LOOP() {
+    if (carriage_move - AVG > SENSETIVITY) {
+      Serial.println("Carriage forward!");
+      // Движение вперёд
+      carriage_is_reverse = 1;
+  
+      if (carriage_is_reverse != carriage_is_reverse_old) {
+        rest(PIN_CARRIAGE_REVERSE_ENABLE, PIN_CARRIAGE_DIRECT_POWER, PIN_CARRIAGE_REVERSE_POWER);
+      }
+  
+      carriage_is_reverse_old = carriage_is_reverse;
+  
+      digitalWrite(PIN_CARRIAGE_REVERSE_ENABLE, LOW);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_DIRECT_POWER, HIGH);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_REVERSE_POWER, LOW);
+    }
+    else if (AVG - carriage_move > SENSETIVITY) {
+      Serial.println("Carriage backward!");
+      // Движение назад
+      carriage_is_reverse = 1;
+  
+      if (carriage_is_reverse != carriage_is_reverse_old) {
+        rest(PIN_CARRIAGE_REVERSE_ENABLE, PIN_CARRIAGE_DIRECT_POWER, PIN_CARRIAGE_REVERSE_POWER);
+      }
+  
+      carriage_is_reverse_old = carriage_is_reverse;
+  
+      digitalWrite(PIN_CARRIAGE_REVERSE_ENABLE, HIGH);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_DIRECT_POWER, LOW);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_REVERSE_POWER, HIGH);
+    }
+    else {
+      Serial.println("Carriage stay!");
+      // Стоим
+      rest(PIN_CARRIAGE_REVERSE_ENABLE, PIN_CARRIAGE_DIRECT_POWER, PIN_CARRIAGE_REVERSE_POWER);
+    }
+  }
+}
+
+// Корутина движения магнита
+COROUTINE (move_magnet) {
+  COROUTINE_LOOP() {
+    if (magnet_move - AVG > SENSETIVITY) {
+      Serial.println("Magnet forward!");
+      // Движение вперёд
+      magnet_is_reverse = 1;
+  
+      if (magnet_is_reverse != magnet_is_reverse_old) {
+        rest(PIN_MAGNET_REVERSE_ENABLE, PIN_MAGNET_DIRECT_POWER, PIN_MAGNET_REVERSE_POWER);
+      }
+  
+      magnet_is_reverse_old = magnet_is_reverse;
+  
+      digitalWrite(PIN_CARRIAGE_REVERSE_ENABLE, LOW);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_DIRECT_POWER, HIGH);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_REVERSE_POWER, LOW);
+    }
+    else if (AVG - magnet_move > SENSETIVITY) {
+      Serial.println("Magnet backward!");
+      // Движение назад
+      magnet_is_reverse = 1;
+  
+      if (magnet_is_reverse != magnet_is_reverse_old) {
+        rest(PIN_MAGNET_REVERSE_ENABLE, PIN_MAGNET_DIRECT_POWER, PIN_MAGNET_REVERSE_POWER);
+      }
+  
+      magnet_is_reverse_old = magnet_is_reverse;
+  
+      digitalWrite(PIN_CARRIAGE_REVERSE_ENABLE, HIGH);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_DIRECT_POWER, LOW);
+      COROUTINE_DELAY(POWER_DELAY);
+      digitalWrite(PIN_CARRIAGE_REVERSE_POWER, HIGH);
+    }
+    else {
+      Serial.println("Magnet stay!");
+      // Стоим
+      rest(PIN_MAGNET_REVERSE_ENABLE, PIN_MAGNET_DIRECT_POWER, PIN_MAGNET_REVERSE_POWER);
+    }
+  }
+}
+
+// =========================================================================
+// Функции
+
+// Настройки
 void setup() {  
   setup_radio();
 
-  pinMode(PIN_DIRECT_ENABLE, OUTPUT);
-  pinMode(PIN_REVERSE_ENABLE, OUTPUT);
-  pinMode(PIN_REVERSE_ON, OUTPUT);
+  pinMode(PIN_CARRIAGE_DIRECT_POWER, OUTPUT);
+  pinMode(PIN_CARRIAGE_REVERSE_ENABLE, OUTPUT);
+  pinMode(PIN_CARRIAGE_REVERSE_POWER, OUTPUT);
+
+  pinMode(PIN_MAGNET_DIRECT_POWER, OUTPUT);
+  pinMode(PIN_MAGNET_REVERSE_ENABLE, OUTPUT);
+  pinMode(PIN_MAGNET_REVERSE_POWER, OUTPUT);
 
   Serial.begin(9600);
 }
 
+// Цикл
 void loop() {  
   if (radio.available()) { // Если в буфер приёмника поступили данные
     radio.read(&data, sizeof(data));
+    carriage_move = data[0];
+    magnet_move = data[1];
     
-    log_dbg();
-
-    if (abs(AVG - data) > SENSETIVITY)
-      is_move = 1;
-    else
-      is_move = 0;
-    
-    if (AVG - data > SENSETIVITY)
-      is_reverse = 1;
-    else
-      is_reverse = 0;
-
-    if (is_reverse != is_reverse_old)
-      take_a_break();
-
-    movement(is_reverse, is_move);
-    
-    is_reverse_old = is_reverse;
+    move_carriage.runCoroutine();
+    move_magnet.runCoroutine();
   }
-
-  last_move_time = millis();
 }
 
+// Настройка радио модуля
 void setup_radio() {
   radio.begin();                   // Инициализация модуля NRF24L01
   radio.setChannel(9);             // Обмен данными будет вестись на пятом канале (2,405 ГГц)
@@ -74,34 +194,7 @@ void setup_radio() {
   radio.startListening();          // Начинаем прослушивать открываемую трубу
 }
 
+// Отладочные записи
 void log_dbg() {
-  Serial.println(String(is_move) + String(is_reverse));
-}
-
-void take_a_break() {
-  //Serial.println("Break start");
-  // Выключаем двигатель и даём схеме отдохнуть
-  digitalWrite(PIN_DIRECT_ENABLE, LOW);
-  digitalWrite(PIN_REVERSE_ENABLE, LOW);
-  digitalWrite(PIN_REVERSE_ON, LOW);
-  delay(REVERSE_DELAY);
-  //Serial.println("Break end");
-}
-
-void movement(uint8_t is_reverse, uint8_t is_move) {
-  if (is_move && !is_reverse) {
-    digitalWrite(PIN_REVERSE_ENABLE, LOW);
-    digitalWrite(PIN_DIRECT_ENABLE, HIGH);
-    digitalWrite(PIN_REVERSE_ON, LOW);
-  }
-  else if (is_move && is_reverse) {
-    digitalWrite(PIN_REVERSE_ENABLE, HIGH);
-    digitalWrite(PIN_DIRECT_ENABLE, LOW);
-    digitalWrite(PIN_REVERSE_ON, HIGH);
-  }
-  else {
-    digitalWrite(PIN_REVERSE_ENABLE, LOW);
-    digitalWrite(PIN_DIRECT_ENABLE, LOW);
-    digitalWrite(PIN_REVERSE_ON, LOW);
-  }
+  Serial.println(String(carriage_move) + String(magnet_move));
 }
