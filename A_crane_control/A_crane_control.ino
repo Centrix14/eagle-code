@@ -16,6 +16,11 @@
 #define PIPE1 0xB4B5B6B7F1 // Труба для управления кареткой
 #define PIPE2 0xB4B5B6B7CD // Труба для управления включения и выключения магнита
 
+#define AVG 117
+#define SENSETIVITY 5
+
+#define STARTUP_SLEEP 1000
+
 RF24 radio(PIN_CE, PIN_CSN); // Создаём объект radio с указанием выводов CE и CSN
 
 // Текущее и предыдущее состояние кнопки
@@ -59,11 +64,11 @@ void setup_pins() {
 }
 
 void setup_radio() {
-  radio.begin();  // Инициализация модуля NRF24L01
-  radio.setChannel(CHANNEL); // Обмен данными будет вестись на пятом канале (2,405 ГГц)
-  radio.setDataRate (RF24_1MBPS); // Скорость обмена данными 1 Мбит/сек
+  radio.begin();                  // Инициализация модуля NRF24L01
+  radio.setChannel(CHANNEL);      // Обмен данными будет вестись на пятом канале (2,405 ГГц)
+  radio.setDataRate(RF24_1MBPS);  // Скорость обмена данными 1 Мбит/сек
   radio.setPALevel(RF24_PA_HIGH); // Выбираем высокую мощность передатчика (-6dBm)
-  radio.openWritingPipe(PIPE1); // Открываем трубу с уникальным ID
+  radio.openWritingPipe(PIPE1);   // Открываем трубу с уникальным ID
 }
 
 void handle_bttn() {
@@ -80,16 +85,18 @@ void handle_joystick() {
   int raw_input = 0;
 
   raw_input = analogRead(PIN_JOYSTICK2_Y);
-  carriage_move = map(raw_input, 0, 1024, 0, 255);
+  magnet_move = map(raw_input, 0, 1024, 0, 255);
 
   raw_input = analogRead(PIN_JOYSTICK1_X);
-  magnet_move = map(raw_input, 0, 1024, 0, 255);
+  carriage_move = map(raw_input, 0, 1024, 0, 255);
 }
 
 void send_data() {
+  uint8_t carriage_data[] = {carriage_move, magnet_move};
+  
   // Передаём данные о движении магнита
   radio.openWritingPipe(PIPE1);
-  is_sended = radio.write(&magnet_move, sizeof(magnet_move)); // Отправляем считанные показания по радиоканалу
+  is_sended = radio.write(&carriage_data, sizeof(carriage_data)); // Отправляем считанные показания по радиоканалу
   if (!is_sended)
     Serial.println("Error: fail to send data for magnet move");
   delay(50);
