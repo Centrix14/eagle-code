@@ -42,7 +42,7 @@
   COROUTINE_DELAY(POWER_DELAY); \
   digitalWrite(PIN2, HIGH); \
   COROUTINE_DELAY(POWER_DELAY); \
-  digitalWrite(PIN3, LOW); \
+  digitalWrite(PIN3, LOW);
 
 // =========================================================================
 // Основные переменные
