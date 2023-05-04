@@ -1,41 +1,138 @@
 // Программа для парома
 // 24.03.2023
 
+// , (GND) . (5V)
+// . ( 10) . ( 9)
+// . ( 13) . (11)
+// . ( 12) .
+
 #include <SPI.h>  // Подключаем библиотеку для работы с SPI-интерфейсом
 #include <nRF24L01.h> // Подключаем файл конфигурации из библиотеки RF24
 #include <RF24.h> // Подключаем библиотеку для работа для работы с модулем NRF24L01
 #include <Servo.h> // Библиотека для работы с servo-мотором
+#include <AceRoutine.h>
 
-#define PIN_CE  10  // Номер пина Arduino, к которому подключен вывод CE радиомодуля
-#define PIN_CSN 9 // Номер пина Arduino, к которому подключен вывод CSN радиомодуля
+#define CHANNEL 120
+#define PIPE0   0x7878787878LL
 
-#define PIN_ENGINE 12 // Пин реле двигателя
-#define PIN_REVERSE 13 // Пин реле реверса
+// Пины nRF
+#define PIN_CE  10 // Номер пина Arduino, к которому подключен вывод CE радиомодуля
+#define PIN_CSN 9  // Номер пина Arduino, к которому подключен вывод CSN радиомодуля
 
-#define PIN_WHEEL 6 // Пин руля
-#define PIN_VELOCITY 5 // Пин управления скоростью
+// Двигатель аппарели
+#define PIN_RE_LOGIC   5 // Логический пин
+#define PIN_RE_REVERSE 6 // Пин обратного хода
 
-#define REVERSE_DELAY 1000 // Задержка реверса
+// Главный двигатель (main engine)
+#define PIN_ME_LOGIC   3 // Логический пин
+#define PIN_ME_REVERSE 4 // Пин обратного хода
+
+// Руль
+#define PIN_WHEEL 2
+
+// Задержка реверса
+#define REVERSE_DELAY 200
+
+// Чувствительность, средние значения
+#define SENSE       10
+#define WHEEL_MEAN  125
+#define RAMP_MEAN   150
+
+#define ramp_rest() { \
+  digitalWrite(PIN_RE_LOGIC, LOW); \
+  COROUTINE_DELAY(REVERSE_DELAY); \
+  digitalWrite(PIN_RE_REVERSE, LOW); \
+  COROUTINE_DELAY(REVERSE_DELAY); \
+}
+
+#define motor_rest() { \
+  digitalWrite(PIN_ME_LOGIC, LOW); \
+  COROUTINE_DELAY(REVERSE_DELAY); \
+  digitalWrite(PIN_ME_REVERSE, LOW); \
+  COROUTINE_DELAY(REVERSE_DELAY); \
+}
 
 RF24 radio(PIN_CE, PIN_CSN); // Создаём объект radio с указанием выводов CE и CSN
-Servo wheel_servo; // Серва руля
-Servo engine;
+
+Servo wheel; // Серва руля
+Servo motor; // Основной двигатель парома (это не серва!)
 
 // Данные для передачи
 // Первый элемент - состояние кнопки реверса
-// Второй элемент - состояние потенциометра скорости
-// Третий элемент - состояние потенциометра апарели
+// Второй элемент - состояние потенциометра апарели
+// Третий элемент - состояние потенциометра скорости
 // Третий элемент - состояние джойстика руля
 
 uint8_t control_data[] = {0, 0, 0, 0};
 
-uint8_t current_reverse_state = 0;
+uint8_t ramp_old_reverse_state = 0,
+        motor_old_reverse_state = 0;
 
-void setup() {  
-  wheel_servo.attach(PIN_WHEEL);
-  engine.attach(PIN_VELOCITY);
-  
+COROUTINE (apply_ramp) {
+  COROUTINE_LOOP () {
+    uint8_t ramp_state = control_data[1];
+
+    if (abs(ramp_state - RAMP_MEAN) > SENSE) {
+      bool ramp_reverse_state = 0;
+      
+      if (ramp_state < RAMP_MEAN)
+        ramp_reverse_state = 1;
+
+      if (ramp_reverse_state != ramp_old_reverse_state)
+        ramp_rest();
+
+      digitalWrite(PIN_RE_LOGIC, HIGH);
+      digitalWrite(PIN_RE_REVERSE, ramp_reverse_state);
+
+      ramp_old_reverse_state = ramp_reverse_state;
+    }
+    else {
+      digitalWrite(PIN_RE_LOGIC, LOW);
+      digitalWrite(PIN_RE_REVERSE, LOW);
+    }
+  }
+}
+
+COROUTINE (apply_motor) {
+  COROUTINE_LOOP () {
+    uint8_t motor_reverse_state = control_data[0];
+    uint8_t motor_state = control_data[2];
+
+    if (motor_reverse_state != motor_old_reverse_state)
+      motor_rest();
+
+    if (motor_reverse_state)
+      digitalWrite(PIN_ME_REVERSE, HIGH);
+    else
+      digitalWrite(PIN_ME_REVERSE, LOW);
+      
+    if (motor_state > SENSE) {
+      motor.write(motor_state);
+    }
+  }
+}
+
+COROUTINE (apply_wheel) {
+  COROUTINE_LOOP () {
+    uint8_t wheel_state = control_data[3];
+
+    if (abs(wheel_state - WHEEL_MEAN) > SENSE) {
+      if (wheel_state > WHEEL_MEAN)
+        wheel.write(0);
+      else
+        wheel.write(180);
+    }
+    else
+      wheel.write(90);
+  }
+}
+
+void setup() {
   setup_radio();
+  setup_pins();
+  
+  wheel.attach(PIN_WHEEL);
+  motor.attach(PIN_ME_LOGIC);
   
   Serial.begin(9600);
 }
@@ -43,20 +140,29 @@ void setup() {
 void loop() {  
   if (radio.available()) { // Если в буфер приёмника поступили данные
     radio.read(&control_data, sizeof(control_data));
-    //log_dbg();
     apply_data(control_data);
+    
+    log_dbg();
   }
-
-  analogWrite(6, control_data[1]);
 }
 
 void setup_radio() {
   radio.begin();  // Инициализация модуля NRF24L01
-  radio.setChannel(9); // Обмен данными будет вестись на пятом канале (2,405 ГГц)
-  radio.setDataRate (RF24_1MBPS); // Скорость обмена данными 1 Мбит/сек
-  radio.setPALevel(RF24_PA_HIGH); // Выбираем высокую мощность передатчика (-6dBm)
-  radio.openReadingPipe (1, 0x7878787878LL); // Открываем трубу ID передатчика
+  radio.setChannel(CHANNEL); // Обмен данными будет вестись на пятом канале (2,405 ГГц)
+  radio.setDataRate(RF24_250KBPS); // Скорость обмена данными 1 Мбит/сек
+  radio.setPALevel(RF24_PA_LOW); // Выбираем высокую мощность передатчика (-6dBm)
+  radio.openReadingPipe(1, PIPE0); // Открываем трубу ID передатчика
   radio.startListening(); // Начинаем прослушивать открываемую трубу
+}
+
+void setup_pins() {
+  pinMode(PIN_ME_LOGIC, OUTPUT);
+  pinMode(PIN_ME_REVERSE, OUTPUT);
+  
+  pinMode(PIN_RE_LOGIC, OUTPUT);
+  pinMode(PIN_RE_REVERSE, OUTPUT);
+  
+  pinMode(PIN_WHEEL, OUTPUT);
 }
 
 void log_dbg() {
@@ -67,40 +173,10 @@ void log_dbg() {
 }
 
 void apply_data(uint8_t data[]) {
-  uint8_t reverse_bttn = data[0];
-  uint8_t velocity = data[1];
-  uint8_t aparelle = data[2];
   uint8_t wheel = data[3];
 
-  if (reverse_bttn != current_reverse_state) {
-    reverse_move();
-  }
+  apply_motor.runCoroutine();
+  apply_ramp.runCoroutine();
 
-  apply_wheel(wheel);
-  apply_velocity(velocity);
-}
-
-void apply_wheel(uint8_t angle) {
-  Serial.println(angle);
-  wheel_servo.write(angle);
-}
-
-void apply_velocity(uint8_t velocity) {
-  engine.write(velocity);
-}
-
-void reverse_move() {
-  //Serial.println("Before: " + String(current_reverse_state));
-  
-  // Выключаем двигатель и даём схеме отдохнуть
-  digitalWrite(PIN_ENGINE, LOW);
-  digitalWrite(PIN_REVERSE, LOW);
-  delay(REVERSE_DELAY);
-
-  // Запускаем всё обратно
-  current_reverse_state = !current_reverse_state;
-  digitalWrite(PIN_REVERSE, current_reverse_state);
-  digitalWrite(PIN_ENGINE, HIGH);
-  
-  //Serial.println("After: " + String(current_reverse_state));
+  apply_wheel.runCoroutine();
 }
