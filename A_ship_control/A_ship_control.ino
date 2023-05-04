@@ -1,17 +1,21 @@
 // Программа для пульта от парома
 // 24.03.2023
 
-#include <SPI.h>  // Подключаем библиотеку для работы с SPI-интерфейсом
+#include <SPI.h>      // Подключаем библиотеку для работы с SPI-интерфейсом
 #include <nRF24L01.h> // Подключаем файл конфигурации из библиотеки RF24
-#include <RF24.h> // Подключаем библиотеку для работа для работы с модулем NRF24L01
+#include <RF24.h>     // Подключаем библиотеку для работа для работы с модулем NRF24L01
+
+#define CHANNEL 120
+#define PIPE0   0x7878787878LL
 
 #define PIN_CE  10  // Номер пина Arduino, к которому подключен вывод CE радиомодуля
-#define PIN_CSN 9 // Номер пина Arduino, к которому подключен вывод CSN радиомодуля
-#define PIN_BTTN 7 // Пин кнопки
-#define PIN_BTTN_LED 6 // Пин светодиода кнопки
-#define PIN_REOSTAT1 A4 // Пин реостата 1
-#define PIN_REOSTAT2 A5 // Пин реостата 2
-#define PIN_JOYSTICK_X A3 // Пин джойстика
+#define PIN_CSN 9   // Номер пина Arduino, к которому подключен вывод CSN радиомодуля
+
+#define PIN_BTTN       A0 // Пин кнопки реверса
+#define PIN_BTTN_LED   6  // Пин светодиода кнопки
+#define PIN_REOSTAT1   A4 // Пин меньшего реостата (апарель)
+#define PIN_REOSTAT2   A1 // Пин большого реостата (скорость)
+#define PIN_JOYSTICK_X A5 // Пин джойстика руля
 
 RF24 radio(PIN_CE, PIN_CSN); // Создаём объект radio с указанием выводов CE и CSN
 
@@ -20,10 +24,10 @@ uint8_t bttn_current_state = 0;
 uint8_t bttn_old_state = 0;
 
 // Данные для передачи
-// Первый элемент - состояние кнопки
-// Второй элемент - состояние потенциометра 1
-// Третий элемент - состояние потенциометра 2
-// Третий элемент - состояние джойстика
+// Первый элемент - состояние кнопки реверса
+// Второй элемент - состояние потенциометра апарели
+// Третий элемент - состояние потенциометра скорости
+// Третий элемент - состояние джойстика руля
 
 uint8_t control_data[] = {0, 0, 0, 0};
 
@@ -49,21 +53,19 @@ void setup_pins() {
   pinMode(PIN_REOSTAT1, INPUT);
   pinMode(PIN_REOSTAT2, INPUT);
   pinMode(PIN_JOYSTICK_X, INPUT);
-
-  digitalWrite(PIN_BTTN_LED, 0);
 }
 
 void setup_radio() {
   radio.begin();  // Инициализация модуля NRF24L01
-  radio.setChannel(9); // Обмен данными будет вестись на пятом канале (2,405 ГГц)
-  radio.setDataRate (RF24_1MBPS); // Скорость обмена данными 1 Мбит/сек
-  radio.setPALevel(RF24_PA_HIGH); // Выбираем высокую мощность передатчика (-6dBm)
-  radio.openWritingPipe(0x7878787878LL); // Открываем трубу с уникальным ID
+  radio.setChannel(CHANNEL); // Обмен данными будет вестись на пятом канале (2,405 ГГц)
+  radio.setDataRate(RF24_250KBPS); // Скорость обмена данными 1 Мбит/сек
+  radio.setPALevel(RF24_PA_LOW); // Выбираем высокую мощность передатчика (-6dBm)
+  radio.openWritingPipe(PIPE0); // Открываем трубу с уникальным ID
 }
 
 void handle_bttn() {
-  bttn_current_state = digitalRead(PIN_BTTN);
-  if (bttn_old_state && !bttn_current_state) {
+  bttn_current_state = analogRead(PIN_BTTN);
+  if (bttn_current_state != bttn_old_state) {
     control_data[0] = !control_data[0];
 
     digitalWrite(PIN_BTTN_LED, control_data[0]);
@@ -78,7 +80,7 @@ void handle_reostat() {
   control_data[1] = map(raw_input, 0, 1024, 0, 180);
 
   raw_input = analogRead(PIN_REOSTAT2);
-  control_data[2] = map(raw_input, 0, 1024, 0, 255);
+  control_data[2] = map(raw_input, 0, 1024, 0, 180);
 }
 
 void handle_joystick() {
